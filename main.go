@@ -13,12 +13,13 @@ import (
 	"sync"
 	"strings"
 	"time"
+	"encoding/csv"
 
 	"github.com/akamensky/argparse"
 )
 
 var (
-	version = "1.0.1"
+	version = "1.0.2"
 	author = "n0nexist"
 	mapEntries = []string{}
 	foundBssids = []string{}
@@ -97,7 +98,20 @@ func getIconString(device_type, auth_mode string) string{
 }
 
 func processLine(line, action, filterssid, filtermac string) {
-	parts := strings.Split(line, ",")
+	r := csv.NewReader(strings.NewReader(line))
+	r.Comma = ','
+
+	parts, err := r.Read()
+	if err != nil {
+		fmt.Println("Errore durante la lettura della riga:", err)
+		return
+	}
+
+	if len(parts) < 9 {
+		fmt.Println("La riga non contiene abbastanza campi")
+		return
+	}
+
 	mac := parts[0]
 	ssid := parts[1]
 	auth_mode := parts[2]
