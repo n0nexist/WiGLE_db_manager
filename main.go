@@ -19,33 +19,15 @@ import (
 )
 
 var (
-	version = "1.0.2"
+	version = "1.1.1"
 	author = "n0nexist"
 	mapEntries = []string{}
-	foundBssids = []string{}
 	mu sync.Mutex
-	removeDuplicates = false
+	map_path = "ciao.html"
 )
 
 func makeTimestamp() int64 {
     return time.Now().UnixNano() / 1e6
-}
-
-func addNetwork(strToAdd string) {
-    foundBssids = append(foundBssids, strToAdd)
-}
-
-func containsNetwork(search string) bool {
-    mu.Lock()
-    defer mu.Unlock()
-
-    for _, str := range foundBssids {
-        if str == search {
-            return true
-        }
-    }
-
-    return false
 }
 
 func addString(strToAdd string) {
@@ -57,15 +39,59 @@ func isNetworkOpen(authMode string) bool {
 }
 
 func addPointInMap(info, latitude, longitude, icon string){
-	addString(fmt.Sprintf("L.marker([%s, %s], {icon: %s}).addTo(map).bindTooltip(\"%s\");", latitude, longitude, icon, info))
+	addString(fmt.Sprintf("addMarker(%s,%s,\"%s\", \"%s\")", latitude, longitude, icon, info))
+}
+
+func removeDuplicateBSSID(fileName string) error {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	newFileName := "new_" + fileName // Nome del nuovo file con contenuto non duplicato
+	newFile, err := os.Create(newFileName)
+	if err != nil {
+		return err
+	}
+	defer newFile.Close()
+
+	scanner := bufio.NewScanner(file)
+	bssidSet := make(map[string]bool)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.Contains(line, "<b>BSSID:</b>") && strings.Contains(line, "<br>") {
+			parts := strings.Split(line, "<b>BSSID:</b>")
+			if len(parts) > 1 {
+				bssid := strings.TrimSpace(strings.Split(parts[1], "<br>")[0])
+				if bssidSet[bssid] {
+					continue
+				}
+				bssidSet[bssid] = true
+			}
+		}
+
+		// Scrivi la riga nel nuovo file se non è un duplicato
+		_, err := fmt.Fprintln(newFile, line)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	return os.Rename(newFileName, fileName) // Rinomina il nuovo file con il nome del file originale
 }
 
 func removeExistingMap() {
-	filePath := "map/index.html"
-    if _, err := os.Stat(filePath); os.IsNotExist(err) {
+    if _, err := os.Stat(map_path); os.IsNotExist(err) {
         throw(err)
     }
-    err := os.Remove(filePath)
+    err := os.Remove(map_path)
     throw(err)
 }
 
@@ -75,25 +101,25 @@ func shouldFilter(filterssid, filtermac, ssid, mac string) bool {
 
 func getIconString(device_type, auth_mode string) string{
 	if device_type == "BT" {
-		return "bluetoothIcon"
+		return "blue"
 	} else if device_type == "BLE" {
-		return "bluetoothLeIcon"
+		return "violet"
 	} else if device_type == "GSM" {
-		return "gsmIcon"
+		return "grey"
 	} else if device_type == "WIFI" {
 		if isNetworkOpen(auth_mode) {
-			return "openwifiIcon"
+			return "green"
 		} else if strings.Contains(auth_mode, "WEP") {
-			return "wepwifiIcon"
+			return "yellow"
 		} else if strings.Contains(auth_mode, "WPS") {
-			return "wpswifiIcon"
+			return "red"
 		} else if strings.Contains(auth_mode, "WPA") {
-			return "wpawifiIcon"
+			return "red"
 		} else{
-			return "whiteIcon"
+			return "white"
 		}
 	} else {
-		return "whiteIcon"
+		return "shadow"
 	}
 }
 
@@ -103,12 +129,12 @@ func processLine(line, action, filterssid, filtermac string) {
 
 	parts, err := r.Read()
 	if err != nil {
-		fmt.Println("Errore durante la lettura della riga:", err)
+		fmt.Println("Error reading line", err)
 		return
 	}
 
 	if len(parts) < 9 {
-		fmt.Println("La riga non contiene abbastanza campi")
+		fmt.Println("Line does not contain enough fields")
 		return
 	}
 
@@ -126,70 +152,58 @@ func processLine(line, action, filterssid, filtermac string) {
 	info := fmt.Sprintf(`<b>SSID:</b> %s<br><b>BSSID:</b> %s<br><b>OPEN:</b> %t<br><b>AUTH:</b> %s<br><b>SEEN:</b> %s<br><b>CH:</b> %s<br><b>RSSI:</b> %s<br><b>COORDS:</b> %s, %s<br><b>TYPE:</b> %s`, ssid, mac, isNetworkOpen(auth_mode), auth_mode, first_seen, channel, rssi, latitude, longitude, device_type)
 
 
-	if !(shouldFilter(filterssid, filtermac, ssid, mac)){
+	if action == "none" {
+		addPointInMap(info, latitude, longitude, device_icon)
 
-		if removeDuplicates {
-			if containsNetwork(mac){
-				return
-			}else{
-				addNetwork(mac)
-			}
-		}
+	} else if action == "open" {
 
-		if action == "none" {
+		if isNetworkOpen(auth_mode) && device_type == "WIFI" {
 			addPointInMap(info, latitude, longitude, device_icon)
-
-		} else if action == "open" {
-
-			if isNetworkOpen(auth_mode) && device_type == "WIFI" {
-				addPointInMap(info, latitude, longitude, device_icon)
-			}
-			
-		} else if action == "wep" {
-
-			if strings.Contains(auth_mode, "WEP") && device_type == "WIFI" {
-				addPointInMap(info, latitude, longitude, device_icon)
-			}
-			
-		} else if action == "wps" {
-
-			if strings.Contains(auth_mode, "WPS") && device_type == "WIFI" {
-				addPointInMap(info, latitude, longitude, device_icon)
-			}
-			
-		} else if action == "bt" {
-
-			if device_type == "BT" {
-				addPointInMap(info, latitude, longitude, device_icon)
-			}
-			
-		} else if action == "ble" {
-
-			if device_type == "BLE" {
-				addPointInMap(info, latitude, longitude, device_icon)
-			}
-			
-		} else if action == "wifi" {
-
-			if device_type == "WIFI" {
-				addPointInMap(info, latitude, longitude, device_icon)
-			}
-			
-		} else if action == "bluetooth" { 
-
-			if device_type == "BT" || device_type == "BLE" {
-				addPointInMap(info, latitude, longitude, device_icon)
-			}
-			
 		}
+		
+	} else if action == "wep" {
 
+		if strings.Contains(auth_mode, "WEP") && device_type == "WIFI" {
+			addPointInMap(info, latitude, longitude, device_icon)
+		}
+		
+	} else if action == "wps" {
+
+		if strings.Contains(auth_mode, "WPS") && device_type == "WIFI" {
+			addPointInMap(info, latitude, longitude, device_icon)
+		}
+		
+	} else if action == "bt" {
+
+		if device_type == "BT" {
+			addPointInMap(info, latitude, longitude, device_icon)
+		}
+		
+	} else if action == "ble" {
+
+		if device_type == "BLE" {
+			addPointInMap(info, latitude, longitude, device_icon)
+		}
+		
+	} else if action == "wifi" {
+
+		if device_type == "WIFI" {
+			addPointInMap(info, latitude, longitude, device_icon)
+		}
+		
+	} else if action == "bluetooth" { 
+
+		if device_type == "BT" || device_type == "BLE" {
+			addPointInMap(info, latitude, longitude, device_icon)
+		}
+		
 	}
-    
+
 }
 
 func throw(err error){
 	if err != nil {
-        log.Fatal(err)
+        log.Println(err)
     }
 }
 
@@ -234,11 +248,12 @@ func loadDB(filePath, action, filterssid, filtermac string, lines_at_a_time int)
 
 func genHtmlMap(){
 
-	file, err := os.Create("map/index.html")
+	file, err := os.Create(map_path)
 	throw(err)
 	defer file.Close()
 
-	_, err = file.WriteString(`<!DOCTYPE html><html><head><title>WiGLE db manager</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script></head><body><div id="map" style="height: 100vh; width: 100%;"></div><script>var map = L.map('map').setView([53.0000, 9.0000], 3);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);var bluetoothIcon = L.icon({iconUrl: 'icons/blue.png',iconSize:[18, 25]});var bluetoothLeIcon = L.icon({iconUrl: 'icons/cyan.png',iconSize:[18, 25]});var gsmIcon = L.icon({iconUrl: 'icons/black.png',iconSize:[18, 25]});var openwifiIcon = L.icon({iconUrl: 'icons/green.png',iconSize:[18, 25]});var wpswifiIcon = L.icon({iconUrl: 'icons/yellow.png',iconSize:[18, 25]});var wepwifiIcon = L.icon({iconUrl: 'icons/orange.png',iconSize:[18, 25]});var whiteIcon = L.icon({iconUrl: 'icons/white.png',iconSize:[18, 25]});var wpawifiIcon = L.icon({iconUrl: 'icons/red.png',iconSize:[18, 25]});`)
+	_, err = file.WriteString(`<!DOCTYPE html><html><head><title>WiGLE db manager</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" /><script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script></head><body><div id="map" style="height: 100vh; width: 100%;"></div><script>var map = L.map('map').setView([53.0000, 9.0000], 3);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);function addMarker(lat, lon, color, tooltip) {var marker = L.marker([lat, lon], {icon: L.icon({iconUrl: 'https://github.com/pointhi/leaflet-color-markers/blob/master/img/marker-icon-' + color + '.png?raw=true',shadowUrl: 'https://github.com/pointhi/leaflet-color-markers/blob/master/img/marker-icon-shadow.png?raw=true',iconSize: [18, 25]})}).bindTooltip(tooltip).addTo(map);marker.on('click', function (e) {var textArea = document.createElement("textarea");var textToCopy = lat + " " + lon;textArea.value = textToCopy;document.body.appendChild(textArea);textArea.select();document.execCommand('copy');document.body.removeChild(textArea);alert("Coordinates copied to clipboard: " + textToCopy);});}
+`)
 	throw(err)
 
 	for _, s := range mapEntries {
@@ -248,6 +263,14 @@ func genHtmlMap(){
 	_, err = file.WriteString("</script></body></html>")
 	throw(err)
 
+}
+
+func checkDuplicates(dupl string){
+	if (dupl=="yes") {
+		log.Printf("Removing duplicates from %s\n", map_path)
+		err := removeDuplicateBSSID(map_path)
+		throw(err)
+	}
 }
 
 func main() {
@@ -262,12 +285,8 @@ func main() {
 	bsize := parser.Int("b", "batch-size", &argparse.Options{Required: false, Help: "The lines at a time to process (default 1000)", Default: 1000})
 	filterssid := parser.String("s", "filter-ssid", &argparse.Options{Required: false, Help: "Filter out an ssid from the results", Default: "nofilter"})
 	filtermac := parser.String("m", "filter-bssid", &argparse.Options{Required: false, Help: "Filter out a bssid from the results", Default: "nofilter"})
-	var tmp *bool = parser.Flag("r", "remove-duplicates", &argparse.Options{Required: false, Help: "Removes duplicate bssid's", Default: false})
-	if tmp != nil {
-		removeDuplicates = *tmp 
-	} else {
-		removeDuplicates = false
-	}
+	mappath := parser.String("p", "path", &argparse.Options{Required: false, Help: "The generated map path", Default: "index.html"})
+	duplicates := parser.String("r", "remove-duplicates", &argparse.Options{Required: false, Help: "Remove duplicate bssids [no/yes]", Default: "no"})
 
 	err := parser.Parse(os.Args)
 	if err != nil {
@@ -277,13 +296,17 @@ func main() {
 
 	startTime := makeTimestamp()
 
+	map_path = *mappath
+
 	loadDB(*db,*act,*filterssid,*filtermac,*bsize)
 
-	log.Println("Writing to map/index.html")
+	log.Printf("Writing to %s\n", map_path)
 	
 	removeExistingMap()
 	genHtmlMap()
 
+	checkDuplicates(*duplicates)
+	
 	log.Printf("Whole operation took %dms", makeTimestamp()-startTime)
 	log.Println("GoodBye")
 
