@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	version = "1.0"
+	version = "1.0.1"
 	author = "n0nexist"
 	mapEntries = []string{}
 	foundBssids = []string{}
@@ -103,9 +103,9 @@ func processLine(line, action, filterssid, filtermac string) {
 	auth_mode := parts[2]
 	first_seen := parts[3]
 	channel := parts[4]
-	rssi := parts[5]
-	latitude := parts[6]
-	longitude := parts[7]
+	rssi := parts[6]
+	latitude := parts[7]
+	longitude := parts[8]
 	device_type := parts[len(parts)-1]
 
 	device_icon := getIconString(device_type, auth_mode)
